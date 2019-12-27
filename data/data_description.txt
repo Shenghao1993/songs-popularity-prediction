@@ -1,0 +1,11 @@
+1. Unique_ID : Unique Identifier.
+2. Name : Name of the Artist.
+3. Genre : Genre of the Song.
+4. Country : Origin Country of Artist.
+5. Song_Name : Name of the Song.
+6. Timestamp : Release Date and Time.
+7. Views : Number of times the song was played/viewed (*Target/Dependent Variable*).
+8. Comments : Count of comments for the song.
+9. Likes : Count of Likes.
+10. Popularity : Popularity score for the artist.
+11. Followers : Number of Followers.
