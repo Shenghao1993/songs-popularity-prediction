@@ -21,18 +21,12 @@ class Preprocessor:
 
     def _conv_numeric_feature(self, feature):
         feature = feature.replace(',', '')
-        vals = [int(val) for val in re.findall('\d+', feature)]
-        if len(vals) == 1:
-            return vals[0] * 1000 if 'K' in feature else vals[0] 
-        elif len(vals) == 2:
-            if '.' in feature:
-                value = vals[0] + 0.1 * vals[1]
-                if 'K' in feature:
-                    value = value * 1000
-                return value
-            return None
+        if 'K' in feature:
+            return float(feature[:-1]) * 1000
+        elif 'M' in feature:
+            return float(feature[:-1]) * 1000000
         else:
-            return None
+            return float(feature)
 
     def _extract_year_month(self, ts_str):
         ts = datetime.strptime(ts_str, '%Y-%m-%d %H:%M:%S.%f')
@@ -43,6 +37,14 @@ class Preprocessor:
         # Covert "Likes" and "Popularity" to numeric data type
         df['Likes'] = df['Likes'].apply(lambda likes: self._conv_numeric_feature(likes))
         df['Popularity'] = df['Popularity'].apply(lambda popularity: self._conv_numeric_feature(popularity))
+
+        # Perform log(x+1) transformation on numeric features
+        if 'Views' in df.columns:
+            df['Log_Views'] = np.log(df['Views'] + 1)
+        df['Log_Comments'] = np.log(df['Comments'] + 1)
+        df['Log_Likes'] = np.log(df['Likes'] + 1)
+        df['Log_Popularity'] = np.log(df['Popularity'] + 1)
+        df['Log_Followers'] = np.log(df['Followers'] + 1)
 
         # Extract release year & month from timestamp
         lambda_expr = lambda ts_str: pd.Series(self._extract_year_month(ts_str))
@@ -117,23 +119,25 @@ class Preprocessor:
         print("Start processing training and test datasets ...")
         start_time = time.time()
 
-        # Process training data
+        # Load training and test datasets
         train_df = pd.read_csv(self.train_data_path)
-        print("Process training data: ", self.train_data_path)
-        processed_train_df, boxcox_lambdas = self._process_train_data(train_df)
-        print("Elapsed time: %s seconds" % round(time.time() - start_time, 4))
-        print()
-
-        # Process test data
         test_df = pd.read_csv(self.test_data_path)
-        print("Process test data: ", self.test_data_path)
-        processed_test_df = self._process_test_data(test_df, boxcox_lambdas)
+        processed_dfs = []
+        drop_cols = ['Name', 'Genre', 'Country', 'Song_Name', 'Timestamp',
+                     'Comments', 'Likes', 'Popularity', 'Followers', 'Release_Year', 'Release_Month']
+
+        for df in [train_df, test_df]:
+            # One-hot encode the categorical features
+            encoded_df = pd.get_dummies(self._engineer_features(df),
+                                        columns=['Categorical_Genre', 'Categorical_Year', 'Categorical_Month'])
+            encoded_df = encoded_df.drop(drop_cols, axis=1)
+            processed_dfs.append(encoded_df)        
         print("Elapsed time: %s seconds" % round(time.time() - start_time, 4))
-        return processed_train_df, processed_test_df, boxcox_lambdas
+        return processed_dfs
 
 
 class ModelWorker:
-    def __init__(self, model, scores, boxcox_lambdas):
+    def __init__(self, model, scores):
         """Initilization
 
         @param model
@@ -143,7 +147,7 @@ class ModelWorker:
         """
         self.model = model
         self.scores = scores
-        self.boxcox_lambdas = boxcox_lambdas
+        # self.boxcox_lambdas = boxcox_lambdas
 
     def _evaluate(self, y_pred, y_true):
         '''Evaluate performance of classification
@@ -167,10 +171,10 @@ class ModelWorker:
             print()
             if grid_search:
                 clf = GridSearchCV(self.model, param_grid, cv=KFold(n_splits=nfolds),
-                                   scoring='%s' % score)
+                                   scoring='%s' % score, verbose=10)
             else:
                 clf = RandomizedSearchCV(self.model, param_grid, cv=KFold(n_splits=nfolds),
-                                         scoring='%s' % score, random_state=106)
+                                         scoring='%s' % score, verbose=10)
             clf.fit(X_train, y_train)
 
             print("Best parameters set found on development set:")
@@ -193,6 +197,7 @@ class ModelWorker:
     def predict(self, X_train, y_train, X_test, features):
         self.model.fit(X_train[features], y_train)
         print("Fitted model: ", self.model)
-        X_test['BC_Views'] = self.model.predict(X_test[features])
-        X_test['Views'] = inv_boxcox(X_test['BC_Views'], self.boxcox_lambdas.get('Views')) - 1
+        X_test['Log_Views'] = self.model.predict(X_test[features])
+        X_test['Views'] = np.exp(X_test['Log_Views']) - 1
+        # X_test['Views'] = inv_boxcox(X_test['BC_Views'], self.boxcox_lambdas.get('Views')) - 1
         return X_test
